@@ -171,6 +171,9 @@ fi
 
 # --- Configuration ----------------------------------------------------------
 
+COMPONENTS=(ffmpeg libogg libvorbis opus lame x264 x265 libvpx dav1d svtav1)
+
+# sources.txt rows: name version sha256 url [local-filename]
 declare -A SRC_VERSION SRC_SHA256 SRC_URL SRC_FILE
 while read -r name version sha url file; do
     [[ -z "$name" || "$name" == \#* ]] && continue
@@ -179,6 +182,9 @@ while read -r name version sha url file; do
     SRC_URL[$name]=$url
     SRC_FILE[$name]=${file:-$(basename "$url")}
 done < <(tr -d '\r' < "$SOURCES_FILE")
+for dep in "${COMPONENTS[@]}"; do
+    [[ -n "${SRC_URL[$dep]:-}" ]] || die "$dep missing in $SOURCES_FILE"
+done
 
 if [[ -n "${FFMPEG_VERSION:-}" && "$FFMPEG_VERSION" != "${SRC_VERSION[ffmpeg]}" ]]; then
     echo "NOTE: building ffmpeg $FFMPEG_VERSION instead of pinned ${SRC_VERSION[ffmpeg]}; checksum not verified"
@@ -486,7 +492,6 @@ write_summary() {
 
 # --- Main -------------------------------------------------------------------
 
-COMPONENTS=(ffmpeg libogg libvorbis opus lame x264 x265 libvpx dav1d svtav1)
 if ! enabled libvorbis && enabled libogg; then DISABLE+=" libogg "; fi
 log "Building for $PLATFORM in $WORK_DIR (jobs: $JOBS, disabled:$(printf ' %s' $DISABLE))"
 for dep in "${COMPONENTS[@]:1}"; do

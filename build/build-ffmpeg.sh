@@ -288,7 +288,9 @@ fetch() {
     local name=$1 file="$SOURCES_CACHE/${SRC_FILE[$1]}" dir="$WORK_DIR/src/$1"
     if [[ ! -f "$file" ]]; then
         log "Downloading $name ${SRC_VERSION[$name]}"
-        curl -fsSL --retry 5 --retry-delay 5 -o "$file.part" "${SRC_URL[$name]}" \
+        # --retry-all-errors: plain --retry skips e.g. TLS/connection errors.
+        curl -fSL --no-progress-meter --retry 5 --retry-delay 10 --retry-all-errors \
+            -o "$file.part" "${SRC_URL[$name]}" \
             || die "downloading ${SRC_URL[$name]} failed"
         mv "$file.part" "$file"
     fi

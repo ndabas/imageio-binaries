@@ -1,0 +1,147 @@
+name: Build ffmpeg
+
+# Builds lean, self-contained ffmpeg executables from source with
+# build/build-ffmpeg.sh (versions pinned in build/sources.txt), natively on
+# each platform, then smoke-tests and checks them. Optionally opens a pull
+# request adding them to ffmpeg/, or creates a draft release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: >-
+          "all", or comma-separated: linux-x86_64, linux-aarch64, macos-x86_64,
+          macos-aarch64, win-i686, win-x86_64, win-aarch64
+        default: all
+      ffmpeg-version:
+        description: ffmpeg release to build (empty = version pinned in build/sources.txt)
+        default: ""
+      publish:
+        description: What to do with the binaries
+        type: choice
+        options: [none, draft-release, pull-request]
+        default: none
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.matrix.outputs.include }}
+    steps:
+      - id: matrix
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          all='[
+            {"platform": "linux-x86_64", "runner": "ubuntu-24.04", "image": "quay.io/pypa/musllinux_1_2_x86_64"},
+            {"platform": "linux-aarch64", "runner": "ubuntu-24.04-arm", "image": "quay.io/pypa/musllinux_1_2_aarch64"},
+            {"platform": "macos-x86_64", "runner": "macos-15-intel"},
+            {"platform": "macos-aarch64", "runner": "macos-15"},
+            {"platform": "win-i686", "runner": "windows-2025", "msystem": "MINGW32"},
+            {"platform": "win-x86_64", "runner": "windows-2025", "msystem": "UCRT64"},
+            {"platform": "win-aarch64", "runner": "windows-11-arm", "msystem": "CLANGARM64"}
+          ]'
+          include=$(jq -c --arg p "$PLATFORMS" '($p | gsub(" "; "") | split(",")) as $want
+            | [.[] | select($p == "all" or (.platform as $x | $want | index($x)))]' <<< "$all")
+          if [[ "$include" == "[]" ]]; then
+            echo "::error::No known platform in '$PLATFORMS'"
+            exit 1
+          fi
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: matrix
+    name: build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.include) }}
+    env:
+      FFMPEG_VERSION: ${{ inputs.ffmpeg-version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.gitattributes
+            /build/
+            /images/cockatoo.mp4
+
+      - uses: actions/cache@v4
+        with:
+          path: _build/sources
+          key: ffmpeg-sources-${{ hashFiles('build/sources.txt') }}-${{ inputs.ffmpeg-version }}
+
+      - name: Build (musllinux container)
+        if: runner.os == 'Linux'
+        # Pass the job summary file into the container so the script can write to it.
+        run: >
+          docker run --rm -v "$PWD:/work" -w /work -e FFMPEG_VERSION -e WORK_DIR=/tmp/build
+          -e GITHUB_ACTIONS -e GITHUB_STEP_SUMMARY=/github/step_summary
+          -v "$GITHUB_STEP_SUMMARY:/github/step_summary"
+          "${{ matrix.image }}" bash build/build-ffmpeg.sh --install-tools
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: bash build/build-ffmpeg.sh --install-tools
+
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+
+      - name: Build (MSYS2)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash build/build-ffmpeg.sh --install-tools
+
+      - name: Test
+        env:
+          TEST_NAME: Smoke test on ${{ matrix.runner }}
+          ENCODERS: >-
+            libx264 libx265 libvpx-vp9 libmp3lame libopus libvorbis
+            ${{ matrix.platform != 'win-i686' && 'libsvtav1' || '' }}
+        run: |
+          read -ra encoders <<< "$ENCODERS"
+          for exe in _out/ffmpeg-${{ matrix.platform }}-v*; do
+            if [[ "$exe" == *.txt ]]; then continue; fi
+            bash build/test-ffmpeg.sh "$exe" "${encoders[@]}"
+          done
+
+      - name: Test on musl (Alpine)
+        if: runner.os == 'Linux'
+        run: >
+          docker run --rm -v "$PWD:/work" -w /work
+          -e GITHUB_ACTIONS -e GITHUB_STEP_SUMMARY=/github/step_summary
+          -v "$GITHUB_STEP_SUMMARY:/github/step_summary" -e "TEST_NAME=Smoke test on Alpine (musl)"
+          alpine:latest
+          sh -c 'apk add -q bash && bash build/test-ffmpeg.sh _out/ffmpeg-${{ matrix.platform }}-v*[0-9]'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-${{ matrix.platform }}
+          path: _out/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    uses: ./.github/workflows/check-and-publish.yml
+    permissions:
+      contents: write
+      pull-requests: write
+    with:
+      artifact-pattern: ffmpeg-*
+      publish: ${{ inputs.publish }}
+      title: ffmpeg binaries built from source
+      tag-prefix: ffmpeg-build
+      max-macos: "11.0"

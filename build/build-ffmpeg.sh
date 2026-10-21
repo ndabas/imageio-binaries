@@ -128,25 +128,37 @@ fi
 
 # --- Build tools ------------------------------------------------------------
 
+# retry <command...>: package mirrors (MSYS2 in particular) rate-limit with
+# HTTP 429 when many CI jobs install at once.
+retry() {
+    local attempt=1
+    until "$@"; do
+        if ((attempt >= 5)); then return 1; fi
+        log "Attempt $attempt failed, retrying in $((attempt * 30)) s: $*"
+        sleep $((attempt * 30))
+        attempt=$((attempt + 1))
+    done
+}
+
 # zlib comes from the platform: Alpine's zlib-static, MSYS2's static libz.a, or
 # the macOS system libz.
 install_tools() {
     begin_stage tools "Installing build tools for $PLATFORM"
     case "$OS" in
         linux)
-            apk add --no-cache autoconf automake bash bzip2 coreutils curl diffutils \
+            retry apk add --no-cache autoconf automake bash bzip2 coreutils curl diffutils \
                 libtool linux-headers make meson nasm perl pkgconf samurai tar xz \
                 zlib-dev zlib-static
             ;;
         macos)
-            brew install --quiet automake meson nasm ninja pkgconf
+            retry brew install --quiet automake meson nasm ninja pkgconf
             ;;
         win)
             local p="${MINGW_PACKAGE_PREFIX:?}"
             local pkgs=(make diffutils automake autoconf libtool tar xz bzip2
                 "$p-cc" "$p-binutils" "$p-cmake" "$p-meson" "$p-ninja" "$p-pkgconf" "$p-zlib")
             if [[ $ARCH != aarch64 ]]; then pkgs+=("$p-nasm"); fi
-            pacman -S --needed --noconfirm "${pkgs[@]}"
+            retry pacman -S --needed --noconfirm "${pkgs[@]}"
             ;;
     esac
 }

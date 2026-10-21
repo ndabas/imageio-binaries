@@ -26,6 +26,13 @@
 
 set -euo pipefail
 
+# macOS ships bash 3.2, which lacks features used below (associative arrays,
+# empty arrays with `set -u`); install a newer one, e.g. `brew install bash`.
+# This check must stay bash 3.2 compatible.
+if ((BASH_VERSINFO[0] < 4)); then
+    echo "ERROR: bash >= 4 is required, this is bash $BASH_VERSION ($BASH)" >&2
+    exit 1
+fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCES_FILE="$ROOT_DIR/build/sources.txt"
 
@@ -231,8 +238,8 @@ case "$OS" in
         CXX_RUNTIME="-lc++"
         FF_EXTRA_LIBS="-lc++"
         FF_CONFIGURE+=(--enable-videotoolbox --enable-audiotoolbox --enable-avfoundation)
-        CMAKE_ARGS+=("-DCMAKE_OSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
-            -DCMAKE_FIND_FRAMEWORK=LAST -DCMAKE_IGNORE_PREFIX_PATH="/opt/homebrew;/usr/local")
+        CMAKE_ARGS+=("-DCMAKE_OSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET" -DCMAKE_FIND_FRAMEWORK=LAST)
+
         ;;
     win)
         AUTOTOOLS_HOST=(--build="$MINGW_CHOST" --host="$MINGW_CHOST")

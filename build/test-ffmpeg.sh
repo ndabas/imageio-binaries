@@ -41,13 +41,13 @@ version="$("$ff" -hide_banner -version)"
 echo "${version%%$'\n'*}"
 encoders="$("$ff" -hide_banner -encoders)"
 for e in "${required[@]}"; do
-    grep -qE "^ \S+ $e " <<< "$encoders" || fail "missing required encoder $e"
+    grep -qE "^ [^ ]+ $e " <<< "$encoders" || fail "missing required encoder $e"
 done
 
 w=128 h=96 n=10
 for spec in "libx264 mp4" "libx265 mp4" "libvpx-vp9 webm" "libsvtav1 mkv" "mpeg4 avi"; do
     read -r codec ext <<< "$spec"
-    grep -qE "^ \S+ $codec " <<< "$encoders" || { echo "skip $codec (not available)"; skipped+=("$codec"); continue; }
+    grep -qE "^ [^ ]+ $codec " <<< "$encoders" || { echo "skip $codec (not available)"; skipped+=("$codec"); continue; }
     out="$tmp/$codec.$ext"
     "$ff" -nostdin -v error -f lavfi -i "testsrc=size=${w}x${h}:rate=10" -frames:v $n \
         -c:v "$codec" -pix_fmt yuv420p -y "$out" || fail "encoding with $codec"
@@ -59,7 +59,7 @@ done
 
 for spec in "libmp3lame mp3" "libopus opus" "libvorbis ogg"; do
     read -r codec ext <<< "$spec"
-    grep -qE "^ \S+ $codec " <<< "$encoders" || { echo "skip $codec (not available)"; skipped+=("$codec"); continue; }
+    grep -qE "^ [^ ]+ $codec " <<< "$encoders" || { echo "skip $codec (not available)"; skipped+=("$codec"); continue; }
     out="$tmp/$codec.$ext"
     "$ff" -nostdin -v error -f lavfi -i "sine=frequency=440:duration=1" -c:a "$codec" -y "$out" \
         || fail "encoding with $codec"

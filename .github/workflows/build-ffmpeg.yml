@@ -90,9 +90,16 @@ jobs:
           -v "$GITHUB_STEP_SUMMARY:/github/step_summary"
           "${{ matrix.image }}" bash build/build-ffmpeg.sh --install-tools
 
+      # macOS ships bash 3.2; build-ffmpeg.sh needs bash >= 4.
+      - name: Install bash (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install --quiet bash
+          "$(brew --prefix)/bin/bash" --version
+
       - name: Build (macOS)
         if: runner.os == 'macOS'
-        run: bash build/build-ffmpeg.sh --install-tools
+        run: '"$(brew --prefix)/bin/bash" build/build-ffmpeg.sh --install-tools'
 
       - uses: msys2/setup-msys2@v2
         if: runner.os == 'Windows'

@@ -452,13 +452,10 @@ write_summary() {
     {
         echo "### ✅ ffmpeg $FFMPEG_VERSION for $PLATFORM"
         echo
-        echo "| | |"
-        echo "|---|---|"
-        echo "| File | \`$(basename "$OUT_FILE")\` |"
-        echo "| Size | $(awk -v s="$size" 'BEGIN { printf "%.1f MiB", s / 1048576 }') |"
-        echo "| SHA-256 | \`$sha\` |"
-        echo "| Compiler | $compiler |"
-        echo "| Build time | $(duration "$SECONDS") |"
+        echo "- **File:** \`$(basename "$OUT_FILE")\` ($(awk -v s="$size" 'BEGIN { printf "%.1f MiB", s / 1048576 }'))"
+        echo "- **SHA-256:** \`$sha\`"
+        echo "- **Compiler:** $compiler"
+        echo "- **Build time:** $(duration "$SECONDS")"
         echo
         echo "| Component | Version | Build time |"
         echo "|---|---|---|"

@@ -419,7 +419,8 @@ build_ffmpeg() {
         if enabled "$dep"; then libs+=("--enable-${flag[$dep]}"); fi
     done
 
-    ./configure --prefix="$PREFIX" \
+    # configure ignores $CC/$CXX and would otherwise default to gcc.
+    ./configure --prefix="$PREFIX" --cc="$CC" --cxx="$CXX" \
         --pkg-config=pkg-config --pkg-config-flags=--static \
         --extra-cflags="-I$PREFIX/include" \
         --extra-ldflags="-L$PREFIX/lib $FF_EXTRA_LDFLAGS" \

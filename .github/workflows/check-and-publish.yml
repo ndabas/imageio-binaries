@@ -1,0 +1,141 @@
+name: Check and publish ffmpeg binaries
+
+# Reusable workflow: checks the platform baseline of the ffmpeg executables in
+# the given artifacts and optionally publishes them, either as a pull request
+# adding them to ffmpeg/ or as a draft release.
+#
+# Pull requests require "Allow GitHub Actions to create and approve pull
+# requests" in the repository's Actions settings.
+
+on:
+  workflow_call:
+    inputs:
+      artifact-pattern:
+        description: Artifacts containing the ffmpeg-* executables (and optional *.source.txt)
+        type: string
+        required: true
+      publish:
+        description: none, pull-request or draft-release
+        type: string
+        default: none
+      title:
+        description: Pull request / release title
+        type: string
+        required: true
+      tag-prefix:
+        description: Prefix for the draft release tag
+        type: string
+        default: ffmpeg
+      max-macos:
+        description: Fail if a macOS binary requires a newer macOS than this
+        type: string
+        default: ""
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      PUBLISH: ${{ inputs.publish }}
+      TITLE: ${{ inputs.title }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The repository is large; only fetch blobs that are needed.
+          filter: blob:none
+          sparse-checkout: build
+
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: ${{ inputs.artifact-pattern }}
+          path: _out
+          merge-multiple: true
+
+      - name: Check binaries
+        env:
+          MAX_MACOS: ${{ inputs.max-macos }}
+        run: |
+          if ! command -v llvm-readobj >/dev/null && ! ls /usr/bin/llvm-readobj-* >/dev/null 2>&1; then
+            sudo apt-get update -q && sudo apt-get install -y -q llvm
+          fi
+          args=()
+          if [[ -n "$MAX_MACOS" ]]; then args+=(--max-macos "$MAX_MACOS"); fi
+          # Files in git must stay below GitHub's 100 MiB limit; release assets may be up to 2 GiB.
+          if [[ "$PUBLISH" == pull-request ]]; then args+=(--max-size-mib 100); fi
+          mapfile -t files < <(find _out -type f -name 'ffmpeg-*' ! -name '*.txt' | sort)
+          if ! bash build/check-binary.sh "${args[@]}" "${files[@]}" > check.txt; then
+            cat check.txt
+            if grep -q 'larger than' check.txt; then
+              echo "::error::Files over 100 MiB cannot be added to git; use publish: draft-release for them."
+            fi
+            echo "::error::Binary checks failed, see above."
+            exit 1
+          fi
+          cat check.txt
+
+      - name: Write notes
+        if: inputs.publish != 'none'
+        run: |
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          {
+            echo "Created by the [${{ github.workflow }} workflow (run ${{ github.run_number }})]($run_url)."
+            echo
+            echo '## Binaries'
+            echo
+            echo '```'
+            cat check.txt
+            echo '```'
+            for f in _out/*.source.txt; do
+              [[ -f "$f" ]] || continue
+              echo
+              echo "### $(basename "$f" .source.txt)"
+              echo
+              echo '```'
+              cat "$f"
+              echo '```'
+            done
+            echo
+            echo '## SHA-256'
+            echo
+            echo '```'
+            (cd _out && find . -type f -name 'ffmpeg-*' ! -name '*.txt' -printf '%f\n' | sort | xargs sha256sum)
+            echo '```'
+          } > notes.md
+
+      - name: Open pull request
+        if: inputs.publish == 'pull-request'
+        run: |
+          branch="ffmpeg-binaries/${{ github.run_id }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          mkdir -p ffmpeg
+          new=()
+          while read -r f; do
+            cp "$f" ffmpeg/
+            new+=("ffmpeg/$(basename "$f")")
+          done < <(find _out -type f -name 'ffmpeg-*' ! -name '*.txt' | sort)
+          # ffmpeg/ is outside the sparse checkout, hence --sparse.
+          git add --sparse --chmod=+x -- "${new[@]}"
+          git commit -q -m "$TITLE" -m "$(printf '%s\n' "${new[@]}")"
+          git push -q origin "$branch"
+          url=$(gh pr create --base "${{ github.ref_name }}" --head "$branch" --title "$TITLE" --body-file notes.md)
+          echo "Opened pull request: $url"
+          printf '\n### Published\n\nPull request: %s\n' "$url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create draft release
+        if: inputs.publish == 'draft-release'
+        run: |
+          tag="${{ inputs.tag-prefix }}-$(date -u +%Y%m%d)-${{ github.run_number }}"
+          mapfile -t files < <(find _out -type f -name 'ffmpeg-*' ! -name '*.txt' | sort)
+          url=$(gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$TITLE" \
+            --notes-file notes.md "${files[@]}")
+          echo "Created draft release: $url"
+          printf '\n### Published\n\nDraft release (not public until published): %s\n' "$url" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,107 @@
+name: Download ffmpeg
+
+# Checks the upstream providers of the ffmpeg binaries (see
+# build/download-ffmpeg.py) for releases newer than the files in ffmpeg/,
+# downloads them, smoke-tests them on each platform and checks their baseline.
+# Optionally opens a pull request adding them to ffmpeg/, or creates a draft
+# release. The comparison with the upstream versions is shown in the run summary.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: >-
+          "outdated" (upstream newer than ffmpeg/), "all", or comma-separated:
+          linux-x86_64, linux-aarch64, macos-x86_64, macos-aarch64, win-x86_64, win-aarch64
+        default: outdated
+      publish:
+        description: What to do with the binaries
+        type: choice
+        options: [none, draft-release, pull-request]
+        default: none
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    outputs:
+      platforms: ${{ steps.fetch.outputs.platforms }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Only the file names in ffmpeg/ are needed, not their contents.
+          filter: blob:none
+          sparse-checkout: build
+
+      - id: fetch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PLATFORMS: ${{ inputs.platforms }}
+        run: python3 build/download-ffmpeg.py fetch --platforms "$PLATFORMS" --out _out
+
+      - uses: actions/upload-artifact@v4
+        if: steps.fetch.outputs.platforms != '[]'
+        with:
+          name: ffmpeg-downloads
+          path: _out/
+          if-no-files-found: error
+
+  test:
+    needs: download
+    if: needs.download.outputs.platforms != '[]'
+    name: test ${{ matrix.platform }}
+    runs-on: >-
+      ${{ fromJSON('{
+        "linux-x86_64": "ubuntu-24.04",
+        "linux-aarch64": "ubuntu-24.04-arm",
+        "macos-x86_64": "macos-15-intel",
+        "macos-aarch64": "macos-15",
+        "win-x86_64": "windows-2025",
+        "win-aarch64": "windows-11-arm"
+      }')[matrix.platform] }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.download.outputs.platforms) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.gitattributes
+            /build/
+            /images/cockatoo.mp4
+
+      - uses: actions/download-artifact@v5
+        with:
+          name: ffmpeg-downloads
+          path: _out
+
+      - name: Test
+        env:
+          TEST_NAME: Smoke test on ${{ runner.os }} ${{ runner.arch }}
+        run: |
+          for exe in _out/ffmpeg-${{ matrix.platform }}-v*; do
+            if [[ "$exe" == *.txt ]]; then continue; fi
+            chmod +x "$exe"
+            bash build/test-ffmpeg.sh "$exe"
+          done
+
+  publish:
+    needs: [download, test]
+    if: needs.download.outputs.platforms != '[]'
+    uses: ./.github/workflows/check-and-publish.yml
+    permissions:
+      contents: write
+      pull-requests: write
+    with:
+      artifact-pattern: ffmpeg-downloads
+      publish: ${{ inputs.publish }}
+      title: ffmpeg binaries from upstream builds
+      tag-prefix: ffmpeg-upstream

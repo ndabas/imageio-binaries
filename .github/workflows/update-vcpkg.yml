@@ -1,0 +1,80 @@
+name: Update vcpkg baseline
+
+# Moves the vcpkg baseline that pins the ffmpeg build (build/vcpkg/vcpkg.json)
+# to the latest microsoft/vcpkg commit, if any port in the build changes
+# version (build/update-vcpkg.py), and opens or updates a pull request from
+# the update-vcpkg branch listing the version changes.
+#
+# Pull requests created with the default token do not trigger other
+# workflows: test an update by running "Build ffmpeg" on the update-vcpkg
+# branch. Requires "Allow GitHub Actions to create and approve pull requests"
+# in the repository's Actions settings.
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: vcpkg commit to update to (empty = latest on master)
+        default: ""
+      open-pull-request:
+        description: Open/update the pull request (otherwise only report the changes)
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: update-vcpkg
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The repository is large; only build/ is needed.
+          filter: blob:none
+          sparse-checkout: build
+
+      - name: Update baseline
+        id: update
+        env:
+          COMMIT: ${{ inputs.commit }}
+          DRY_RUN: ${{ !inputs.open-pull-request }}
+        run: |
+          args=(--body "$RUNNER_TEMP/body.md")
+          if [[ -n "$COMMIT" ]]; then args+=(--commit "$COMMIT"); fi
+          if [[ "$DRY_RUN" == true ]]; then args+=(--dry-run); fi
+          rc=0
+          python3 build/update-vcpkg.py "${args[@]}" || rc=$?
+          if ((rc == 3)); then exit 0; fi
+          if ((rc != 0)); then exit $rc; fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update pull request
+        if: steps.update.outputs.changed && inputs.open-pull-request
+        run: |
+          printf '\nBefore merging, run the **Build ffmpeg** workflow on branch `%s`.\n' \
+            "$BRANCH" >> "$RUNNER_TEMP/body.md"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          title="Update vcpkg baseline to $(jq -r '.["builtin-baseline"][:12]' build/vcpkg/vcpkg.json)"
+          git switch -c "$BRANCH"
+          git commit -q -am "$title"
+          git push -q --force origin "$BRANCH"
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [[ -n "$pr" ]]; then
+            gh pr edit "$pr" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+            url=$(gh pr view "$pr" --json url --jq .url)
+          else
+            url=$(gh pr create --base "${{ github.ref_name }}" --head "$BRANCH" --title "$title" \
+              --body-file "$RUNNER_TEMP/body.md")
+          fi
+          echo "Pull request: $url"
+          printf '\n### Pull request\n\n%s\n' "$url" >> "$GITHUB_STEP_SUMMARY"

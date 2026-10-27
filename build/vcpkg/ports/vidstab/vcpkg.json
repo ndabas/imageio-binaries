@@ -1,0 +1,13 @@
+{
+  "name": "vidstab",
+  "version": "1.1.1",
+  "description": "Video stabilization library (vid.stab), used by ffmpeg's vidstabdetect/vidstabtransform filters",
+  "homepage": "https://github.com/georgmartius/vid.stab",
+  "license": "GPL-2.0-or-later",
+  "dependencies": [
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    }
+  ]
+}

@@ -1,7 +1,8 @@
 name: Build ffmpeg
 
-# Builds lean, self-contained ffmpeg executables from source with
-# build/build-ffmpeg.sh (versions pinned in build/sources.txt), natively on
+# Builds lean, self-contained ffmpeg executables from source with vcpkg
+# (build/build-ffmpeg.py; features and pinned vcpkg baseline in
+# build/vcpkg/vcpkg.json, link settings in build/vcpkg/triplets/), natively on
 # each platform, then smoke-tests and checks them. Optionally opens a pull
 # request adding them to ffmpeg/, or creates a draft release.
 
@@ -13,9 +14,6 @@ on:
           "all", or comma-separated: linux-x86_64, linux-aarch64, macos-x86_64,
           macos-aarch64, win-i686, win-x86_64, win-aarch64
         default: all
-      ffmpeg-version:
-        description: ffmpeg release to build (empty = version pinned in build/sources.txt)
-        default: ""
       publish:
         description: What to do with the binaries
         type: choice
@@ -40,13 +38,13 @@ jobs:
           PLATFORMS: ${{ inputs.platforms }}
         run: |
           all='[
-            {"platform": "linux-x86_64", "runner": "ubuntu-24.04", "image": "quay.io/pypa/musllinux_1_2_x86_64"},
-            {"platform": "linux-aarch64", "runner": "ubuntu-24.04-arm", "image": "quay.io/pypa/musllinux_1_2_aarch64"},
+            {"platform": "linux-x86_64", "runner": "ubuntu-24.04"},
+            {"platform": "linux-aarch64", "runner": "ubuntu-24.04-arm"},
             {"platform": "macos-x86_64", "runner": "macos-15-intel"},
             {"platform": "macos-aarch64", "runner": "macos-15"},
-            {"platform": "win-i686", "runner": "windows-2025", "msystem": "MINGW32"},
-            {"platform": "win-x86_64", "runner": "windows-2025", "msystem": "UCRT64"},
-            {"platform": "win-aarch64", "runner": "windows-11-arm", "msystem": "CLANGARM64"}
+            {"platform": "win-i686", "runner": "windows-2025"},
+            {"platform": "win-x86_64", "runner": "windows-2025"},
+            {"platform": "win-aarch64", "runner": "windows-11-arm"}
           ]'
           include=$(jq -c --arg p "$PLATFORMS" '($p | gsub(" "; "") | split(",")) as $want
             | [.[] | select($p == "all" or (.platform as $x | $want | index($x)))]' <<< "$all")
@@ -66,7 +64,9 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.matrix.outputs.include) }}
     env:
-      FFMPEG_VERSION: ${{ inputs.ffmpeg-version }}
+      # Inside the Linux container these are passed as /work/_build/...
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/_build/bincache
+      VCPKG_DOWNLOADS: ${{ github.workspace }}/_build/downloads
     steps:
       - uses: actions/checkout@v5
         with:
@@ -76,53 +76,86 @@ jobs:
             /build/
             /images/cockatoo.mp4
 
-      - uses: actions/cache@v4
+      # vcpkg's binary cache: libraries whose port, triplet and compiler are
+      # unchanged are not rebuilt. Saved even if the build fails.
+      - uses: actions/cache/restore@v4
         with:
-          path: _build/sources
-          key: ffmpeg-sources-${{ hashFiles('build/sources.txt') }}-${{ inputs.ffmpeg-version }}
+          path: |
+            _build/bincache
+            _build/downloads
+          key: vcpkg-${{ matrix.platform }}-${{ hashFiles('build/vcpkg/**') }}-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-${{ matrix.platform }}-${{ hashFiles('build/vcpkg/**') }}-
+            vcpkg-${{ matrix.platform }}-
 
-      - name: Build (musllinux container)
+      - name: Build (Alpine container)
         if: runner.os == 'Linux'
         # Pass the job summary file into the container so the script can write to it.
         run: >
-          docker run --rm -v "$PWD:/work" -w /work -e FFMPEG_VERSION -e WORK_DIR=/tmp/build
+          docker run --rm -v "$PWD:/work" -w /work
           -e GITHUB_ACTIONS -e GITHUB_STEP_SUMMARY=/github/step_summary
           -v "$GITHUB_STEP_SUMMARY:/github/step_summary"
-          "${{ matrix.image }}" bash build/build-ffmpeg.sh --install-tools
+          -e VCPKG_DEFAULT_BINARY_CACHE=/work/_build/bincache -e VCPKG_DOWNLOADS=/work/_build/downloads
+          alpine:3.24 sh -c 'apk add -q python3 && python3 build/build-ffmpeg.py --install-tools'
 
-      # macOS ships bash 3.2; build-ffmpeg.sh needs bash >= 4.
-      - name: Install bash (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install --quiet bash
-          "$(brew --prefix)/bin/bash" --version
-
-      - name: Build (macOS)
-        if: runner.os == 'macOS'
-        run: '"$(brew --prefix)/bin/bash" build/build-ffmpeg.sh --install-tools'
-
-      - uses: msys2/setup-msys2@v2
-        if: runner.os == 'Windows'
+      - uses: actions/setup-python@v6
+        if: runner.os != 'Linux'
         with:
-          msystem: ${{ matrix.msystem }}
-          update: true
+          python-version: "3.x"
 
-      - name: Build (MSYS2)
-        if: runner.os == 'Windows'
-        shell: msys2 {0}
-        run: bash build/build-ffmpeg.sh --install-tools
+      - name: Build
+        if: runner.os != 'Linux'
+        run: python build/build-ffmpeg.py --platform ${{ matrix.platform }} --install-tools
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            _build/bincache
+            _build/downloads
+          key: vcpkg-${{ matrix.platform }}-${{ hashFiles('build/vcpkg/**') }}-${{ github.run_id }}
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: vcpkg-logs-${{ matrix.platform }}
+          path: |
+            _build/${{ matrix.platform }}/buildtrees/**/*.log
+            _build/${{ matrix.platform }}/buildtrees/**/config.log
+          if-no-files-found: ignore
 
       - name: Test
         env:
           TEST_NAME: Smoke test on ${{ matrix.runner }}
+          # GPU encoders cannot run on the runners; only check they are present.
           ENCODERS: >-
-            libx264 libx265 libvpx-vp9 libmp3lame libopus libvorbis
+            libx264 libx265 libvpx-vp9 libaom-av1 libtheora libwebp hap libmp3lame libopus libvorbis
+            libspeex libgsm libopencore_amrnb libvo_amrwbenc
             ${{ matrix.platform != 'win-i686' && 'libsvtav1' || '' }}
+            ${{ matrix.platform == 'win-x86_64' && 'h264_nvenc hevc_nvenc h264_amf h264_qsv' || '' }}
+          FILTERS: zscale vidstabdetect vidstabtransform drawtext
+          PROTOCOLS: >-
+            https srt sftp rtmpe rtmpte
+            ${{ startsWith(matrix.platform, 'linux-') && 'sctp' || '' }}
         run: |
           read -ra encoders <<< "$ENCODERS"
           for exe in _out/ffmpeg-${{ matrix.platform }}-v*; do
             if [[ "$exe" == *.txt ]]; then continue; fi
             bash build/test-ffmpeg.sh "$exe" "${encoders[@]}"
+            filters="$("$exe" -hide_banner -filters)"
+            protocols="$("$exe" -hide_banner -protocols)"
+            for f in $FILTERS; do
+              if ! grep -qE "^ [^ ]+ $f " <<< "$filters"; then
+                echo "::error::$exe has no $f filter"
+                exit 1
+              fi
+            done
+            for p in $PROTOCOLS; do
+              if ! grep -qx "  $p" <<< "$protocols"; then
+                echo "::error::$exe has no $p protocol"
+                exit 1
+              fi
+            done
           done
 
       - name: Test on musl (Alpine)

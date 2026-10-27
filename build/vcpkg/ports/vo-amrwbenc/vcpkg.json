@@ -1,0 +1,13 @@
+{
+  "name": "vo-amrwbenc",
+  "version": "0.1.3",
+  "description": "AMR-WB speech encoder from Android's VisualOn codecs",
+  "homepage": "https://sourceforge.net/projects/opencore-amr/",
+  "license": "Apache-2.0",
+  "dependencies": [
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    }
+  ]
+}

@@ -2,4 +2,4 @@
 *.py text eol=lf
 *.yml text eol=lf
 *.md text eol=lf
-build/sources.txt text eol=lf
+build/vcpkg/** text eol=lf

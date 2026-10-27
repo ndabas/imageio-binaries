@@ -1,0 +1,100 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "$comment": "GPL ffmpeg for imageio-ffmpeg, built by build/build-ffmpeg.py. builtin-baseline pins the vcpkg commit and with it every port version; update it with build/update-vcpkg.py. Features marked (imageio) are added to vcpkg's ffmpeg port from build/vcpkg/ffmpeg-port/.",
+  "builtin-baseline": "67972e92edd181d433927b42d8ab4bfa52ac164a",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": [
+        "ffmpeg",
+        "avcodec",
+        "avdevice",
+        "avfilter",
+        "avformat",
+        "swresample",
+        "swscale",
+        "gpl",
+        "zlib",
+        "bzip2",
+        "lzma",
+        "iconv",
+        "xml2",
+        "x264",
+        "x265",
+        "vpx",
+        "aom",
+        "dav1d",
+        {
+          "name": "svt-av1",
+          "platform": "!x86"
+        },
+        "theora",
+        "webp",
+        "snappy",
+        "mp3lame",
+        "opus",
+        "vorbis",
+        "speex",
+        {
+          "$comment": "(imageio) Apache-2.0, implies version3 (GPLv3).",
+          "name": "opencore-amr"
+        },
+        {
+          "$comment": "(imageio)",
+          "name": "vo-amrwbenc"
+        },
+        {
+          "$comment": "(imageio)",
+          "name": "gsm"
+        },
+        "soxr",
+        {
+          "$comment": "drawtext filter (freetype + harfbuzz; without fontconfig, so fontfile= is needed).",
+          "name": "drawtext"
+        },
+        {
+          "$comment": "(imageio) zscale filter",
+          "name": "zimg"
+        },
+        {
+          "$comment": "(imageio) vidstabdetect/vidstabtransform filters",
+          "name": "vidstab"
+        },
+        {
+          "$comment": "TLS for https; Windows uses schannel. OpenSSL 3 implies version3 (GPLv3).",
+          "name": "openssl",
+          "platform": "!windows"
+        },
+        {
+          "$comment": "srt and sftp protocols (libsrt and libssh use OpenSSL themselves; on Windows ffmpeg's TLS stays on schannel).",
+          "name": "srt"
+        },
+        "ssh",
+        {
+          "$comment": "(imageio) rtmpe/rtmpte protocols on Windows, where ffmpeg has no OpenSSL (it would replace schannel, which uses the Windows certificate store).",
+          "name": "gmp",
+          "platform": "windows"
+        },
+        {
+          "$comment": "(imageio) V4L2 mem2mem hardware codecs (e.g. Raspberry Pi).",
+          "name": "v4l2m2m",
+          "platform": "linux"
+        },
+        {
+          "$comment": "GPU encoders/decoders; driver libraries are loaded at runtime if present.",
+          "name": "nvcodec",
+          "platform": "windows & x64"
+        },
+        {
+          "name": "amf",
+          "platform": "windows & x64"
+        },
+        {
+          "name": "qsv",
+          "platform": "windows & x64"
+        }
+      ]
+    }
+  ]
+}

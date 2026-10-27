@@ -1,0 +1,13 @@
+{
+  "name": "libgsm",
+  "version": "1.0.23",
+  "description": "GSM 06.10 lossy speech compression library",
+  "homepage": "https://www.quut.com/gsm/",
+  "license": null,
+  "dependencies": [
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    }
+  ]
+}

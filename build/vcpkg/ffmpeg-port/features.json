@@ -1,0 +1,66 @@
+{
+  "$comment": "Features added to vcpkg's ffmpeg port by build/build-ffmpeg.py; their configure options are in options.cmake.",
+  "gsm": {
+    "description": "GSM 06.10 decoding/encoding via libgsm",
+    "dependencies": ["libgsm"]
+  },
+  "opencore-amr": {
+    "description": "AMR-NB decoding/encoding and AMR-WB decoding via opencore-amr",
+    "dependencies": [
+      {
+        "name": "ffmpeg",
+        "default-features": false,
+        "features": ["version3"]
+      },
+      "opencore-amr"
+    ]
+  },
+  "vo-amrwbenc": {
+    "description": "AMR-WB encoding via vo-amrwbenc",
+    "dependencies": [
+      {
+        "name": "ffmpeg",
+        "default-features": false,
+        "features": ["version3"]
+      },
+      "vo-amrwbenc"
+    ]
+  },
+  "zimg": {
+    "description": "zscale filter via zimg",
+    "dependencies": [
+      {
+        "name": "ffmpeg",
+        "default-features": false,
+        "features": ["avfilter"]
+      },
+      "zimg"
+    ]
+  },
+  "vidstab": {
+    "description": "vidstabdetect/vidstabtransform filters via vid.stab",
+    "dependencies": [
+      {
+        "name": "ffmpeg",
+        "default-features": false,
+        "features": ["avfilter", "gpl"]
+      },
+      "vidstab"
+    ]
+  },
+  "gmp": {
+    "description": "GMP for the rtmpe/rtmpte protocols (when not using OpenSSL)",
+    "dependencies": [
+      {
+        "name": "ffmpeg",
+        "default-features": false,
+        "features": ["version3"]
+      },
+      "gmp"
+    ]
+  },
+  "v4l2m2m": {
+    "description": "V4L2 mem2mem hardware codecs (Linux; only kernel headers needed)",
+    "supports": "linux"
+  }
+}

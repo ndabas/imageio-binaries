@@ -1,0 +1,13 @@
+{
+  "name": "opencore-amr",
+  "version": "0.1.6",
+  "description": "AMR-NB and AMR-WB speech codecs (decoders and AMR-NB encoder) from Android's OpenCORE",
+  "homepage": "https://sourceforge.net/projects/opencore-amr/",
+  "license": "Apache-2.0",
+  "dependencies": [
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    }
+  ]
+}

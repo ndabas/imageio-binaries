@@ -79,7 +79,8 @@ for f in "$@"; do
         PE*)
             bad="$(grep -viE "$WIN_SYSTEM_DLLS" <<< "$libs" || true)"
             [[ -z "$bad" ]] || errors+=("non-system DLLs: $(echo $bad)")
-            crt="msvcrt"
+            crt="static CRT"
+            grep -qiE '^msvcrt\.dll$' <<< "$libs" && crt="msvcrt"
             grep -qiE '^(ucrtbase|api-ms-win-crt-)' <<< "$libs" && crt="UCRT"
             subsys="$("$READOBJ" --file-headers "$f" | awk '/MajorSubsystemVersion/ {ma=$2} /MinorSubsystemVersion/ {mi=$2} END {print ma "." mi}')"
             baseline="PE subsystem $subsys, $crt"

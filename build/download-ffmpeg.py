@@ -12,7 +12,7 @@ ffmpeg-<linux|macos|win>-<arch>-v<version>[.exe]
 Upstream sources (the same providers as the existing binaries where they are
 still maintained):
 
-    linux-*        https://johnvansickle.com/ffmpeg/ (static, glibc)
+    linux-*        https://github.com/BtbN/FFmpeg-Builds (gpl, release branch)
     macos-*        https://www.osxexperts.net/
     win-x86_64     https://www.gyan.dev/ffmpeg/builds/ (essentials)
     win-aarch64    https://github.com/BtbN/FFmpeg-Builds (gpl, release branch)
@@ -50,15 +50,6 @@ LEGACY_NAMES = {
 # Each latest_* function returns a dict with: version, url, checksum (algo, hex)
 # or None, member (regex for the ffmpeg executable inside the archive), source.
 
-def latest_johnvansickle(arch):
-    readme = get("https://johnvansickle.com/ffmpeg/release-readme.txt").decode()
-    version = re.search(r"version:\s*([\d.]+)", readme).group(1)
-    url = f"https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-{arch}-static.tar.xz"
-    md5 = get(url + ".md5").decode().split()[0]
-    return dict(version=version, url=url, checksum=("md5", md5), member=r"[^/]+/ffmpeg$",
-                source="johnvansickle.com")
-
-
 def latest_osxexperts(kind):
     html = get("https://www.osxexperts.net/").decode("utf-8", "replace")
     label = "Apple Silicon" if kind == "arm" else "Intel"
@@ -81,8 +72,11 @@ def latest_gyan():
 def latest_btbn(target):
     # Dated releases have immutable assets named after `git describe` of the
     # release branch, e.g. ffmpeg-n9.0.2-29-g6dfaba896f-winarm64-gpl-9.0.zip
+    # (Windows) or ...-linux64-gpl-9.0.tar.xz (Linux).
+    windows = target.startswith("win")
+    ext, exe = (r"\.zip", r"\.exe") if windows else (r"\.tar\.xz", "")
     pattern = re.compile(r"ffmpeg-n(\d+\.\d+(?:\.\d+)?)-\d+-g[0-9a-f]+-" + target
-                         + r"-gpl-\d+\.\d+\.zip$")
+                         + r"-gpl-\d+\.\d+" + ext + "$")
     for rel in github_api("repos/BtbN/FFmpeg-Builds/releases?per_page=5"):
         if rel["tag_name"] == "latest":
             continue
@@ -95,13 +89,13 @@ def latest_btbn(target):
         sums = get(assets["checksums.sha256"]).decode()
         sha = next(line.split()[0] for line in sums.splitlines() if line.endswith(name))
         return dict(version=version, url=assets[name], checksum=("sha256", sha),
-                    member=r"/bin/ffmpeg\.exe$", source=f"BtbN/FFmpeg-Builds {rel['tag_name']}")
+                    member=r"/bin/ffmpeg" + exe + "$", source=f"BtbN/FFmpeg-Builds {rel['tag_name']}")
     raise RuntimeError(f"no BtbN {target} release found")
 
 
 SOURCES = {
-    "linux-x86_64": lambda: latest_johnvansickle("amd64"),
-    "linux-aarch64": lambda: latest_johnvansickle("arm64"),
+    "linux-x86_64": lambda: latest_btbn("linux64"),
+    "linux-aarch64": lambda: latest_btbn("linuxarm64"),
     "macos-x86_64": lambda: latest_osxexperts("intel"),
     "macos-aarch64": lambda: latest_osxexperts("arm"),
     "win-x86_64": latest_gyan,

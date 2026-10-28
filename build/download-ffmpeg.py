@@ -14,7 +14,8 @@ still maintained):
 
     linux-*        https://github.com/BtbN/FFmpeg-Builds (gpl, release branch;
                    static except for glibc >= 2.28)
-    macos-*        https://www.osxexperts.net/
+    macos-x86_64   https://evermeet.cx/ffmpeg/ (release; GPG-signed, see build/keys/)
+    macos-aarch64  https://www.osxexperts.net/ (evermeet.cx has no ARM builds)
     win-x86_64     https://www.gyan.dev/ffmpeg/builds/ (essentials)
     win-aarch64    https://github.com/BtbN/FFmpeg-Builds (gpl, release branch)
 
@@ -23,14 +24,17 @@ the platforms to process are set as the `platforms` step output (JSON).
 """
 
 import argparse
+import base64
 import hashlib
 import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -49,7 +53,12 @@ LEGACY_NAMES = {
 
 # --- Upstream sources ---------------------------------------------------------
 # Each latest_* function returns a dict with: version, url, checksum (algo, hex)
-# or None, member (regex for the ffmpeg executable inside the archive), source.
+# or None, member (regex for the ffmpeg executable inside the archive), source,
+# and optionally signature (url of a detached GPG signature, key file, primary
+# key fingerprint).
+
+EVERMEET_KEY = (ROOT / "build" / "keys" / "evermeet-0x1A660874.asc",
+                "20F6EA3E0CFD6B4C53447A73476C4B611A660874")
 
 def latest_osxexperts(kind):
     html = get("https://www.osxexperts.net/").decode("utf-8", "replace")
@@ -60,6 +69,14 @@ def latest_osxexperts(kind):
         raise RuntimeError(f"no ffmpeg ({label}) download found on osxexperts.net")
     return dict(version=m.group(2), url=m.group(1), checksum=None, member=r"(^|/)ffmpeg$",
                 source="osxexperts.net")
+
+
+def latest_evermeet():
+    info = json.loads(get("https://evermeet.cx/ffmpeg/info/ffmpeg/release"))
+    zip_ = info["download"]["zip"]
+    return dict(version=info["version"], url=zip_["url"], checksum=None,
+                signature=(zip_["sig"], *EVERMEET_KEY), member=r"^ffmpeg$",
+                source="evermeet.cx")
 
 
 def latest_gyan():
@@ -97,7 +114,7 @@ def latest_btbn(target):
 SOURCES = {
     "linux-x86_64": lambda: latest_btbn("linux64"),
     "linux-aarch64": lambda: latest_btbn("linuxarm64"),
-    "macos-x86_64": lambda: latest_osxexperts("intel"),
+    "macos-x86_64": latest_evermeet,
     "macos-aarch64": lambda: latest_osxexperts("arm"),
     "win-x86_64": latest_gyan,
     "win-aarch64": lambda: latest_btbn("winarm64"),
@@ -196,27 +213,55 @@ def extract(data, url, member_re):
     raise RuntimeError(f"expected one ffmpeg executable in {url}, found {names}")
 
 
+def verify_signature(data, sig_url, keyfile, fingerprint):
+    """Check a detached GPG signature with gpgv against a key pinned in the repo."""
+    gpgv = os.environ.get("GPGV") or shutil.which("gpgv")
+    if not gpgv:
+        raise RuntimeError("gpgv is needed to verify the download; install GnuPG or set GPGV")
+    # gpgv only reads binary keyrings, so strip the ASCII armor (and its CRC line).
+    text = Path(keyfile).read_text().replace("\r\n", "\n")
+    armored = text.split("-----BEGIN PGP PUBLIC KEY BLOCK-----")[1]
+    body = armored.split("\n\n", 1)[1].split("-----END")[0]
+    key = base64.b64decode("".join(line for line in body.split() if not line.startswith("=")))
+    with tempfile.TemporaryDirectory() as tmp:
+        files = {"key.gpg": key, "data": data, "data.sig": get(sig_url)}
+        for name, content in files.items():
+            Path(tmp, name).write_bytes(content)
+        r = subprocess.run([gpgv, "--status-fd", "1", "--keyring", "./key.gpg", "data.sig", "data"],
+                           cwd=tmp, capture_output=True, text=True)
+    # VALIDSIG <signing key fpr> ... <primary key fpr>
+    valid = [line.split()[2:] for line in r.stdout.splitlines() if line.startswith("[GNUPG:] VALIDSIG ")]
+    if r.returncode or not any(fingerprint in fields for fields in valid):
+        raise RuntimeError(f"GPG signature check failed for {sig_url}:\n{r.stdout}{r.stderr}")
+
+
 def fetch(args):
     upstream, selected = check(args)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     gha = os.environ.get("GITHUB_ACTIONS") == "true"
-    rows = ["| File | Size | Upstream checksum | SHA-256 |", "|---|---|---|---|"]
+    rows = ["| File | Size | Upstream verification | SHA-256 |", "|---|---|---|---|"]
     for platform in selected:
         info = upstream.get(platform) or sys.exit(f"no upstream info for {platform}")
         title = f"Downloading {platform} {info['version']}"
         print(f"::group::{title}" if gha else f"\n{title}", flush=True)
         print(info["url"])
         data = get(info["url"])
+        checks = []
         if info["checksum"]:
             algo, expected = info["checksum"]
             actual = hashlib.new(algo, data).hexdigest()
             if actual.lower() != expected.lower():
                 msg = f"{algo} mismatch for {info['url']}: {actual} != {expected}"
                 sys.exit(f"::error title=Download failed ({platform})::{msg}" if gha else msg)
-            checked = f"{algo} verified"
-        else:
-            checked = "none published"
+            checks.append(f"{algo} verified")
+        if info.get("signature"):
+            try:
+                verify_signature(data, *info["signature"])
+            except RuntimeError as e:
+                sys.exit(f"::error title=Download failed ({platform})::{e}" if gha else str(e))
+            checks.append("GPG signature verified")
+        checked = ", ".join(checks) or "none published"
         print(f"  {checked}")
         target = out / output_name(platform, info["version"])
         target.write_bytes(extract(data, info["url"], info["member"]))

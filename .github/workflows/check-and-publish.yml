@@ -30,6 +30,10 @@ on:
         description: Fail if a macOS binary requires a newer macOS than this
         type: string
         default: ""
+      max-glibc:
+        description: Fail if a Linux binary requires a newer glibc than this
+        type: string
+        default: ""
 
 defaults:
   run:
@@ -61,12 +65,14 @@ jobs:
       - name: Check binaries
         env:
           MAX_MACOS: ${{ inputs.max-macos }}
+          MAX_GLIBC: ${{ inputs.max-glibc }}
         run: |
           if ! command -v llvm-readobj >/dev/null && ! ls /usr/bin/llvm-readobj-* >/dev/null 2>&1; then
             sudo apt-get update -q && sudo apt-get install -y -q llvm
           fi
           args=()
           if [[ -n "$MAX_MACOS" ]]; then args+=(--max-macos "$MAX_MACOS"); fi
+          if [[ -n "$MAX_GLIBC" ]]; then args+=(--max-glibc "$MAX_GLIBC"); fi
           # Files in git must stay below GitHub's 100 MiB limit; release assets may be up to 2 GiB.
           if [[ "$PUBLISH" == pull-request ]]; then args+=(--max-size-mib 100); fi
           mapfile -t files < <(find _out -type f -name 'ffmpeg-*' ! -name '*.txt' | sort)

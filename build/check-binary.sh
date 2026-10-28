@@ -3,34 +3,42 @@
 # self-contained, using `file` and `llvm-readobj` (works for ELF, Mach-O and PE
 # from any host).
 #
-# Usage: build/check-binary.sh [--max-macos VERSION] [--max-size-mib N] FILE...
+# Usage: build/check-binary.sh [--max-macos VERSION] [--max-glibc VERSION]
+#                              [--max-size-mib N] FILE...
 #
 # Checks (non-zero exit on failure):
 #   * the architecture matches the one in the file name (ffmpeg-<os>-<arch>-...)
 #   * the file is smaller than --max-size-mib (GitHub rejects files over 100 MiB
 #     in git, release assets may be up to 2 GiB)
-#   * Linux: fully static (no shared library dependencies)
+#   * Linux: fully static, or linked only against glibc's own libraries (and
+#     libgcc_s); newest required GLIBC_* symbol version <= --max-glibc
 #   * macOS: only system libraries/frameworks; minimum macOS <= --max-macos
 #   * Windows: only Windows system DLLs are imported
 set -euo pipefail
 
 MAX_MACOS=""
+MAX_GLIBC=""
 MAX_SIZE_MIB=""
 while [[ "${1:-}" == --* ]]; do
     case "$1" in
         --max-macos) MAX_MACOS=$2 ;;
+        --max-glibc) MAX_GLIBC=$2 ;;
         --max-size-mib) MAX_SIZE_MIB=$2 ;;
         *) echo "unknown option $1" >&2; exit 2 ;;
     esac
     shift 2
 done
-[[ $# -gt 0 ]] || { echo "usage: $0 [--max-macos VERSION] [--max-size-mib N] FILE..." >&2; exit 2; }
+[[ $# -gt 0 ]] || { echo "usage: $0 [--max-macos VERSION] [--max-glibc VERSION] [--max-size-mib N] FILE..." >&2; exit 2; }
 
 READOBJ="${LLVM_READOBJ:-$(command -v llvm-readobj || true)}"
 if [[ -z "$READOBJ" ]]; then
     READOBJ="$(ls /usr/bin/llvm-readobj-* /usr/lib/llvm*/bin/llvm-readobj 2>/dev/null | sort -V | tail -n1 || true)"
 fi
 [[ -x "$READOBJ" ]] || { echo "llvm-readobj not found (install llvm)" >&2; exit 2; }
+
+# Libraries that are part of glibc itself (plus libgcc_s, which every glibc
+# system has), i.e. what a manylinux wheel may depend on without bundling.
+GLIBC_LIBS='^(ld-linux[-a-z0-9_.]*\.so\.[0-9]+|(libc|libm|libmvec|libdl|libpthread|librt|libresolv|libutil|libgcc_s)\.so\.[0-9]+)$'
 
 WIN_SYSTEM_DLLS='^(api-ms-win-.*|advapi32|avicap32|avrt|bcrypt|bcryptprimitives|cfgmgr32|comctl32|comdlg32|crypt32|d2d1|d3d9|d3d11|d3d12|d3dcompiler_47|dnsapi|dwmapi|dwrite|dxgi|dxva2|evr|gdi32|gdiplus|imm32|iphlpapi|kernel32|mf|mfplat|mfreadwrite|msimg32|msvcrt|ncrypt|normaliz|ntdll|ole32|oleaut32|opengl32|powrprof|propsys|psapi|rpcrt4|secur32|setupapi|shell32|shlwapi|ucrtbase|user32|userenv|uxtheme|version|vfw32|windowscodecs|winmm|wintrust|ws2_32|wsock32)\.dll$'
 
@@ -64,8 +72,21 @@ for f in "$@"; do
 
     case "$desc" in
         ELF*)
-            [[ -z "$libs" ]] || errors+=("dynamically linked against: $(echo $libs)")
-            baseline="static$(grep -oE ', for GNU/Linux [0-9.]+' <<< "$desc" | sed 's/, for GNU\/Linux / (kernel >= /;s/$/)/' || true)"
+            kernel="$(grep -oE ', for GNU/Linux [0-9.]+' <<< "$desc" | sed 's/, for GNU\/Linux / (kernel >= /;s/$/)/' || true)"
+            if [[ -z "$libs" ]]; then
+                baseline="static$kernel"
+            else
+                bad="$(grep -vE "$GLIBC_LIBS" <<< "$libs" || true)"
+                [[ -z "$bad" ]] || errors+=("non-glibc libraries: $(echo $bad)")
+                versions="$("$READOBJ" --version-info "$f" | grep -oE 'GLIBC_([0-9.]+|PRIVATE)' | sort -u || true)"
+                glibc="$(grep -oE '[0-9]+(\.[0-9]+)+' <<< "$versions" | sort -V | tail -n1 || true)"
+                baseline="glibc >= ${glibc:-unknown}$kernel"
+                # Private glibc interfaces are not covered by its ABI guarantee.
+                if grep -q PRIVATE <<< "$versions"; then baseline+=", uses GLIBC_PRIVATE"; fi
+                if [[ -n "$MAX_GLIBC" ]] && ! version_le "${glibc:-999}" "$MAX_GLIBC"; then
+                    errors+=("requires glibc ${glibc:-unknown}, more than $MAX_GLIBC")
+                fi
+            fi
             ;;
         Mach-O*)
             bad="$(grep -vE '^(/usr/lib/|/System/Library/)' <<< "$libs" || true)"

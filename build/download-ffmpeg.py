@@ -12,7 +12,8 @@ ffmpeg-<linux|macos|win>-<arch>-v<version>[.exe]
 Upstream sources (the same providers as the existing binaries where they are
 still maintained):
 
-    linux-*        https://github.com/BtbN/FFmpeg-Builds (gpl, release branch)
+    linux-*        https://github.com/BtbN/FFmpeg-Builds (gpl, release branch;
+                   static except for glibc >= 2.28)
     macos-*        https://www.osxexperts.net/
     win-x86_64     https://www.gyan.dev/ffmpeg/builds/ (essentials)
     win-aarch64    https://github.com/BtbN/FFmpeg-Builds (gpl, release branch)
